@@ -6,14 +6,20 @@ import pandas as pd
 
 st.set_page_config(page_title="Watermelon Vine Coverage App", layout="wide")
 
-st.title("Watermelon Vine Coverage and Petiole Sap Tracker")
+st.title("Watermelon Vine Coverage and Relative Yield Predictor")
 
-st.sidebar.header("Image Settings")
+st.write(
+    "Upload a drone image to estimate watermelon vine coverage, enter petiole sap NO₃-N and K values, "
+    "and generate a relative yield potential score."
+)
 
 uploaded_file = st.file_uploader(
     "Upload a drone image",
     type=["jpg", "jpeg", "png"]
 )
+
+vine_coverage = None
+canopy_status = None
 
 if uploaded_file:
     image = Image.open(uploaded_file).convert("RGB")
@@ -24,13 +30,9 @@ if uploaded_file:
 
     hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
 
-    lower_h = st.sidebar.slider("Lower green hue", 20, 90, 35)
-    upper_h = st.sidebar.slider("Upper green hue", 40, 120, 85)
-    lower_s = st.sidebar.slider("Minimum saturation", 0, 255, 40)
-    lower_v = st.sidebar.slider("Minimum brightness", 0, 255, 40)
-
-    lower_green = np.array([lower_h, lower_s, lower_v])
-    upper_green = np.array([upper_h, 255, 255])
+    # Fixed watermelon vine detection thresholds
+    lower_green = np.array([35, 40, 40])
+    upper_green = np.array([85, 255, 255])
 
     mask = cv2.inRange(hsv, lower_green, upper_green)
 
@@ -42,7 +44,7 @@ if uploaded_file:
     total_pixels = mask_clean.size
     vine_coverage = green_pixels / total_pixels * 100
 
-    st.subheader("Predicted Vine Coverage")
+    st.subheader("Estimated Vine Coverage")
     st.metric("Vine Coverage", f"{vine_coverage:.1f}%")
 
     col1, col2 = st.columns(2)
@@ -57,8 +59,14 @@ if uploaded_file:
     with col2:
         st.image(blended, caption="Vine Coverage Overlay", use_container_width=True)
 
+    if vine_coverage < 50:
+        canopy_status = "Low"
+    elif vine_coverage < 75:
+        canopy_status = "Moderate"
+    else:
+        canopy_status = "Good"
+
 else:
-    vine_coverage = None
     st.info("Upload a drone image to estimate vine coverage.")
 
 st.header("Weekly Petiole Sap Measurements")
@@ -86,24 +94,61 @@ st.subheader("Crop Condition Summary")
 st.write(f"NO₃-N status: **{no3_status}**")
 st.write(f"K status: **{k_status}**")
 
-if vine_coverage is not None:
-    if vine_coverage < 50:
-        canopy_status = "Low"
-    elif vine_coverage < 75:
-        canopy_status = "Moderate"
-    else:
-        canopy_status = "Good"
-
+if canopy_status is not None:
     st.write(f"Canopy status: **{canopy_status}**")
+
+st.header("Relative Yield Potential Predictor")
+
+if vine_coverage is not None:
+    canopy_score = min(vine_coverage / 85 * 100, 100)
+
+    if no3_status == "Adequate":
+        no3_score = 100
+    elif no3_status == "High":
+        no3_score = 85
+    else:
+        no3_score = 50
+
+    if k_status == "Adequate":
+        k_score = 100
+    elif k_status == "High":
+        k_score = 85
+    else:
+        k_score = 50
+
+    relative_yield_score = (
+        canopy_score * 0.60 +
+        no3_score * 0.20 +
+        k_score * 0.20
+    )
+
+    st.metric("Relative Yield Potential Score", f"{relative_yield_score:.0f}/100")
+
+    if relative_yield_score >= 85:
+        yield_category = "Excellent"
+        st.success("Excellent relative yield potential based on canopy coverage and petiole sap readings.")
+    elif relative_yield_score >= 70:
+        yield_category = "Good"
+        st.info("Good relative yield potential. Continue monitoring canopy and sap trends.")
+    elif relative_yield_score >= 50:
+        yield_category = "Moderate"
+        st.warning("Moderate relative yield potential. Check stand, fertility, irrigation, disease, weeds, or weather stress.")
+    else:
+        yield_category = "Low"
+        st.error("Low relative yield potential. Field conditions may be limiting production.")
+
+    st.write(f"Yield potential category: **{yield_category}**")
 
     results = pd.DataFrame([{
         "week_after_transplanting": week,
         "vine_coverage_percent": round(vine_coverage, 1),
+        "canopy_status": canopy_status,
         "no3_ppm": no3,
-        "k_ppm": k,
         "no3_status": no3_status,
+        "k_ppm": k,
         "k_status": k_status,
-        "canopy_status": canopy_status
+        "relative_yield_score": round(relative_yield_score, 0),
+        "yield_category": yield_category
     }])
 
     st.subheader("Results Table")
@@ -117,3 +162,11 @@ if vine_coverage is not None:
         "watermelon_vine_coverage_results.csv",
         "text/csv"
     )
+
+    st.caption(
+        "This is a relative prediction only. It should be calibrated with actual harvested yield data "
+        "before being used as a true yield model."
+    )
+
+else:
+    st.info("Upload a drone image to calculate relative yield potential.")
